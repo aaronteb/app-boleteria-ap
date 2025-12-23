@@ -1,152 +1,111 @@
-﻿#!/bin/bash
-# entrypoint.sh - Script dinámico para Render
-
-set -e  # Detener en caso de error
+#!/bin/bash
+set -e
 
 echo "=========================================="
-echo "🚀 INICIANDO APP BOLETERIA API EN RENDER"
+echo "🚀 APP BOLETERIA API - RENDER DEPLOYMENT"
 echo "=========================================="
-echo "• Hora: $(date)"
-echo "• Directorio: $(pwd)"
-echo "• Usuario: $(whoami)"
+echo "• Startup Time: $(date)"
+echo "• Working Dir: $(pwd)"
+echo "• User: $(whoami)"
 echo ""
 
 # ============================================
-# 1. CONFIGURAR PUERTO DINÁMICO
+# 1. CONFIGURE PORT FOR RENDER
 # ============================================
 export PORT=${PORT:-8080}
 export ASPNETCORE_URLS=http://*:${PORT}
 
-echo "=== CONFIGURACIÓN ==="
-echo "• Puerto: ${PORT}"
-echo "• Entorno: ${ASPNETCORE_ENVIRONMENT:-Production}"
-echo "• URLs: ${ASPNETCORE_URLS}"
+echo "=== NETWORK CONFIG ==="
+echo "• PORT: ${PORT}"
+echo "• ASPNETCORE_URLS: ${ASPNETCORE_URLS}"
+echo "• Environment: ${ASPNETCORE_ENVIRONMENT:-Production}"
 
 # ============================================
-# 2. CONVERTIR DATABASE_URL DE RENDER
+# 2. CONVERT RENDER'S DATABASE_URL
 # ============================================
 if [ -n "${DATABASE_URL}" ]; then
     echo ""
-    echo "=== CONVIRTIENDO DATABASE_URL ==="
-    echo "• DATABASE_URL detectada"
+    echo "=== DATABASE CONFIG ==="
     
-    # Parsear la URL de PostgreSQL de Render
-    # Formato: postgresql://user:password@host:port/database
-    
-    # Extraer componentes
+    # Parse DATABASE_URL format: postgresql://user:password@host:port/database
     DB_URL=${DATABASE_URL}
     
-    # Si empieza con postgresql://, convertir a formato .NET
-    if [[ $DB_URL == postgresql://* ]]; then
-        # Remover el prefijo
-        DB_URL=${DB_URL#postgresql://}
-        
-        # Separar usuario:contraseña y el resto
-        USER_PASS=${DB_URL%%@*}
-        REST=${DB_URL#*@}
-        
-        # Separar usuario y contraseña
-        DB_USER=${USER_PASS%%:*}
-        DB_PASS=${USER_PASS#*:}
-        
-        # Separar host:puerto y base de datos
-        HOST_PORT=${REST%%/*}
-        DB_NAME=${REST#*/}
-        
-        # Separar host y puerto
-        DB_HOST=${HOST_PORT%%:*}
-        DB_PORT=${HOST_PORT#*:}
-        
-        # Si no hay puerto, usar 5432 por defecto
-        if [ "$DB_PORT" = "$DB_HOST" ]; then
-            DB_PORT="5432"
-        fi
-        
-        # Crear connection string para .NET
-        CONNECTION_STRING="Host=${DB_HOST};Port=${DB_PORT};Database=${DB_NAME};Username=${DB_USER};Password=${DB_PASS};SSL Mode=Require;Trust Server Certificate=true;"
-        
-        export ConnectionStrings__DefaultConnection="${CONNECTION_STRING}"
-        
-        echo "• Host: ${DB_HOST}"
-        echo "• Puerto: ${DB_PORT}"
-        echo "• Database: ${DB_NAME}"
-        echo "• Usuario: ${DB_USER}"
-        echo "• Connection String configurada ✓"
+    # Remove postgresql:// prefix
+    DB_URL=${DB_URL#postgresql://}
+    
+    # Extract user:password
+    USER_PASS=${DB_URL%%@*}
+    DB_USER=${USER_PASS%%:*}
+    DB_PASS=${USER_PASS#*:}
+    
+    # Extract host:port/database
+    HOST_PORT_DB=${DB_URL#*@}
+    HOST_PORT=${HOST_PORT_DB%%/*}
+    DB_NAME=${HOST_PORT_DB#*/}
+    
+    # Extract host and port
+    DB_HOST=${HOST_PORT%%:*}
+    DB_PORT=${HOST_PORT#*:}
+    
+    # Default port if not specified
+    if [ "$DB_PORT" = "$HOST_PORT" ]; then
+        DB_PORT="5432"
     fi
+    
+    # Create .NET connection string
+    CONNECTION_STRING="Host=${DB_HOST};Port=${DB_PORT};Database=${DB_NAME};Username=${DB_USER};Password=${DB_PASS};SSL Mode=Require;Trust Server Certificate=true;"
+    
+    export ConnectionStrings__DefaultConnection="${CONNECTION_STRING}"
+    
+    echo "✓ DATABASE_URL converted to ConnectionStrings__DefaultConnection"
+    echo "• Host: ${DB_HOST}:${DB_PORT}"
+    echo "• Database: ${DB_NAME}"
+    echo "• User: ${DB_USER}"
+    
 elif [ -n "${ConnectionStrings__DefaultConnection}" ]; then
     echo ""
-    echo "=== CONEXIÓN A DB ==="
-    echo "• Usando ConnectionStrings__DefaultConnection existente"
+    echo "=== DATABASE CONFIG ==="
+    echo "✓ Using existing ConnectionStrings__DefaultConnection"
 else
     echo ""
-    echo "⚠️ ADVERTENCIA: No hay configuración de base de datos"
-    echo "• DATABASE_URL: ${DATABASE_URL:-No configurada}"
-    echo "• ConnectionStrings__DefaultConnection: ${ConnectionStrings__DefaultConnection:-No configurada}"
+    echo "⚠️ WARNING: No database configuration found"
+    echo "• DATABASE_URL: ${DATABASE_URL:-Not set}"
 fi
 
 # ============================================
-# 3. EJECUTAR MIGRACIONES (OPCIONAL)
-# ============================================
-if [ -n "${ConnectionStrings__DefaultConnection}" ]; then
-    echo ""
-    echo "=== VERIFICANDO MIGRACIONES ==="
-    
-    # Verificar si tenemos herramientas de EF
-    if command -v dotnet-ef &> /dev/null || dotnet ef --help &> /dev/null; then
-        echo "• Ejecutando migraciones..."
-        
-        # Intento 1: Usar dotnet-ef si está disponible
-        if command -v dotnet-ef &> /dev/null; then
-            dotnet-ef database update || echo "• dotnet-ef falló, intentando alternativa..."
-        fi
-        
-        # Intento 2: Usar dotnet ef
-        dotnet ef database update --verbose || echo "• Migración automática falló"
-    else
-        echo "• Herramientas EF no disponibles, omitiendo migración automática"
-        echo "• Sugerencia: Agrega 'DotNetCoreToolsVersion' a tu .csproj"
-    fi
-else
-    echo ""
-    echo "⚠️ OMITIENDO MIGRACIONES - Sin conexión a DB"
-fi
-
-# ============================================
-# 4. VERIFICAR ARCHIVOS DE LA APLICACIÓN
+# 3. VALIDATE APPLICATION FILES
 # ============================================
 echo ""
-echo "=== VERIFICANDO APLICACIÓN ==="
-echo "• Archivo DLL principal:"
+echo "=== APPLICATION VALIDATION ==="
+
+# Check for required files
 if [ -f "AppBoleteriaApi.dll" ]; then
-    echo "  ✓ AppBoleteriaApi.dll encontrado"
-    ls -la AppBoleteriaApi.dll
+    echo "✓ AppBoleteriaApi.dll"
 else
-    echo "  ✗ ERROR: AppBoleteriaApi.dll NO encontrado"
-    echo "  Archivos en directorio:"
-    ls -la
+    echo "✗ AppBoleteriaApi.dll - MISSING"
     exit 1
 fi
 
-echo ""
-echo "• Archivos de configuración:"
-for config_file in appsettings.json appsettings.Production.json appsettings.Docker.json; do
-    if [ -f "$config_file" ]; then
-        echo "  ✓ $config_file"
-    fi
-done
+if [ -f "appsettings.json" ]; then
+    echo "✓ appsettings.json"
+else
+    echo "✗ appsettings.json - MISSING"
+    exit 1
+fi
 
 # ============================================
-# 5. INICIAR LA APLICACIÓN
+# 4. START THE APPLICATION
 # ============================================
 echo ""
 echo "=========================================="
-echo "🚀 INICIANDO APLICACIÓN .NET"
+echo "🚀 STARTING .NET APPLICATION"
 echo "=========================================="
-echo "• Comando: dotnet AppBoleteriaApi.dll"
-echo "• Puerto: ${PORT}"
-echo "• PID: $$"
-echo "• Hora de inicio: $(date)"
+echo "• Command: dotnet AppBoleteriaApi.dll"
+echo "• Port: ${PORT}"
+echo "• Environment: ${ASPNETCORE_ENVIRONMENT:-Production}"
+echo "• Process ID: $$"
+echo "• Time: $(date)"
 echo "=========================================="
 
-# Ejecutar la aplicación
+# Start the application
 exec dotnet AppBoleteriaApi.dll
