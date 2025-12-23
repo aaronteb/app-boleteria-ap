@@ -12,10 +12,11 @@ var builder = WebApplication.CreateBuilder(args);
 // =======================
 // 1. CONFIGURAR PUERTO PARA RENDER
 // =======================
-var port = Environment.GetEnvironmentVariable("PORT") ?? "10000"; // CAMBIO AQUÍ: 8080 → 10000
+var port = Environment.GetEnvironmentVariable("PORT") ?? "10000";
 builder.WebHost.UseUrls($"http://*:{port}");
 
 Console.WriteLine($"🚀 Configurando para Render - Puerto: {port}");
+Console.WriteLine($"🌍 Entorno: {Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ?? "Production"}");
 
 // =======================
 // 2. CORS
@@ -38,16 +39,50 @@ builder.Services.AddCors(options =>
 });
 
 // =======================
-// 3. DATABASE CONTEXT
+// 3. DATABASE CONTEXT - CONEXIÓN PARA RENDER
 // =======================
 builder.Services.AddDbContext<AppDbContext>(options =>
 {
-    var connectionString = builder.Configuration.GetConnectionString("DefaultConnection") ?? 
-                          "Host=localhost;Database=boleteria;Username=postgres;Password=postgres";
+    string connectionString;
     
+    // 1. Obtener la URL de Render
+    var databaseUrl = Environment.GetEnvironmentVariable("DATABASE_URL");
+    
+    if (!string.IsNullOrEmpty(databaseUrl))
+    {
+        // Parsear la URL de Render: postgresql://user:password@host:port/database
+        var uri = new Uri(databaseUrl);
+        var userInfo = uri.UserInfo.Split(':');
+        
+        var host = uri.Host;
+        var portDb = uri.Port > 0 ? uri.Port : 5432;
+        var database = uri.AbsolutePath.TrimStart('/');
+        var username = userInfo[0];
+        var password = userInfo[1];
+        
+        // Construir cadena de conexión para Npgsql
+        connectionString = $"Host={host};Port={portDb};Database={database};Username={username};Password={password};SSL Mode=Require;Trust Server Certificate=true;";
+        
+        Console.WriteLine($"✅ Usando base de datos de Render: {host}");
+        Console.WriteLine($"📊 Base de datos: {database}");
+    }
+    else
+    {
+        // 2. Fallback a conexión local
+        connectionString = builder.Configuration.GetConnectionString("DefaultConnection") ?? 
+                          "Host=localhost;Database=boleteria;Username=postgres;Password=postgres";
+        Console.WriteLine($"⚠️  Usando conexión local");
+    }
+    
+    // Configurar Npgsql con la cadena de conexión
     options.UseNpgsql(connectionString, npgsqlOptions =>
     {
         npgsqlOptions.MigrationsHistoryTable("__EFMigrationsHistory", "public");
+        // Configurar reintentos para producción
+        npgsqlOptions.EnableRetryOnFailure(
+            maxRetryCount: 5,
+            maxRetryDelay: TimeSpan.FromSeconds(30),
+            errorCodesToAdd: null);
     });
 });
 
@@ -118,7 +153,7 @@ app.UseAuthorization();
 app.MapControllers();
 
 // =======================
-// 7. ENDPOINTS PARA RENDER (ÚNICO CAMBIO NECESARIO)
+// 7. ENDPOINTS PARA RENDER
 // =======================
 
 // 1. Endpoint de health check para Render (EN LA RAÍZ)
