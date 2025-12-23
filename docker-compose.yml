@@ -1,0 +1,28 @@
+﻿services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: boleteria-postgres
+    environment:
+      POSTGRES_DB: db_boleteria_dev
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: auto2345
+    ports:
+      - "5433:5432"  # CAMBIA 5432 a 5433 (puerto externo)
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  api:
+    build: .
+    container_name: boleteria-api
+    ports:
+      - "5000:5237"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ConnectionStrings__DefaultConnection=Host=postgres;Port=5432;Database=db_boleteria_dev;Username=postgres;Password=auto2345
+    depends_on:
+      - postgres
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

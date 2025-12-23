@@ -1,0 +1,10 @@
+﻿version: '3.8'
+services:
+  api:
+    image: tebsoft/boleteria-api:latest
+    container_name: boleteria-api
+    ports:
+      - "5000:5237"    # ← MAPEO CRÍTICO
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+    restart: unless-stopped

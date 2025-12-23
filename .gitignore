@@ -1,0 +1,54 @@
+﻿# .NET
+bin/
+obj/
+*.user
+*.suo
+*.cache
+*.pdb
+*.exe
+
+# Visual Studio
+.vs/
+
+# Docker
+.dockerignore
+.env
+.env.local
+
+# Configuraciones locales
+appsettings.local.json
+appsettings.Development.local.json
+
+# Logs
+*.log
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Backup de base de datos (NO SUBIR)
+backup.sql
+buen_backup.sql
+solo_datos.sql
+*.backup
+*.sql
+
+# Publicación
+publish/
+
+# Python
+__pycache__/
+
+# Node.js
+node_modules/
+
+# Archivos temporales
+*.tmp
+*.temp
+
+# Archivo raro que aparece
+xml version=1.0 encoding=utf-8.txt
