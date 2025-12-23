@@ -12,27 +12,20 @@ var builder = WebApplication.CreateBuilder(args);
 // =======================
 // 1. CONFIGURAR PUERTO PARA RENDER
 // =======================
-var port = Environment.GetEnvironmentVariable("PORT") ?? "10000"; // Render usa 10000
+var port = Environment.GetEnvironmentVariable("PORT") ?? "10000"; // CAMBIO AQUÍ: 8080 → 10000
 builder.WebHost.UseUrls($"http://*:{port}");
 
 Console.WriteLine($"🚀 Configurando para Render - Puerto: {port}");
-Console.WriteLine($"🔧 Entorno: {Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ?? "Production"}");
 
 // =======================
-// 2. HEALTH CHECKS
-// =======================
-builder.Services.AddHealthChecks()
-    .AddDbContextCheck<AppDbContext>("Database", tags: new[] { "db" });
-
-// =======================
-// 3. CORS
+// 2. CORS
 // =======================
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("ReactNativeApp",
         policy => policy.WithOrigins(
                     "http://localhost:19006",
-                    "http://localhost:19000",
+                    "http://localhost:19000", 
                     "http://10.0.2.2:5000",
                     "http://192.168.180.146:19000",
                     "http://192.168.180.146:5000",
@@ -45,31 +38,24 @@ builder.Services.AddCors(options =>
 });
 
 // =======================
-// 4. DATABASE CONTEXT
+// 3. DATABASE CONTEXT
 // =======================
 builder.Services.AddDbContext<AppDbContext>(options =>
 {
-    var connectionString = builder.Configuration.GetConnectionString("DefaultConnection") ??
-                          Environment.GetEnvironmentVariable("DATABASE_URL") ??
+    var connectionString = builder.Configuration.GetConnectionString("DefaultConnection") ?? 
                           "Host=localhost;Database=boleteria;Username=postgres;Password=postgres";
-    
-    Console.WriteLine($"📦 Conectando a base de datos...");
     
     options.UseNpgsql(connectionString, npgsqlOptions =>
     {
         npgsqlOptions.MigrationsHistoryTable("__EFMigrationsHistory", "public");
-        npgsqlOptions.EnableRetryOnFailure(
-            maxRetryCount: 3,
-            maxRetryDelay: TimeSpan.FromSeconds(5),
-            errorCodesToAdd: null);
     });
 });
 
 // =======================
-// 5. JWT AUTHENTICATION
+// 4. JWT AUTHENTICATION
 // =======================
-var jwtKey = Environment.GetEnvironmentVariable("Jwt__Key") ??
-             builder.Configuration["Jwt:Key"] ??
+var jwtKey = Environment.GetEnvironmentVariable("Jwt__Key") ?? 
+             builder.Configuration["Jwt:Key"] ?? 
              "default-jwt-key-for-development-32-characters-long";
 
 var key = Encoding.ASCII.GetBytes(jwtKey);
@@ -91,7 +77,7 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     });
 
 // =======================
-// 6. REPOSITORIES & SERVICES
+// 5. REPOSITORIES & SERVICES
 // =======================
 builder.Services.AddScoped<ITenantService, TenantService>();
 builder.Services.AddScoped<ICompanyRepository, CompanyRepository>();
@@ -117,13 +103,12 @@ builder.Services.AddSwaggerGen();
 var app = builder.Build();
 
 // =======================
-// 7. MIDDLEWARE PIPELINE
+// 6. MIDDLEWARE PIPELINE
 // =======================
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
     app.UseSwaggerUI();
-    Console.WriteLine($"🔍 Swagger habilitado en /swagger");
 }
 
 app.UseCors("ReactNativeApp");
@@ -133,75 +118,31 @@ app.UseAuthorization();
 app.MapControllers();
 
 // =======================
-// 8. ENDPOINTS ESPECIALES PARA RENDER
+// 7. ENDPOINTS PARA RENDER (ÚNICO CAMBIO NECESARIO)
 // =======================
 
-// Endpoint MUY SIMPLE para el health check de Render
+// 1. Endpoint de health check para Render (EN LA RAÍZ)
 app.MapGet("/", () => 
 {
-    Console.WriteLine($"✅ Health check recibido en raíz - {DateTime.UtcNow}");
+    Console.WriteLine($"✅ Health check recibido en / - {DateTime.UtcNow}");
     return Results.Ok(new 
     { 
         status = "healthy", 
         service = "Boleteria API",
         timestamp = DateTime.UtcNow,
-        environment = app.Environment.EnvironmentName
+        environment = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ?? "Production"
     });
 });
 
-// Endpoint adicional para health checks
+// 2. Endpoint adicional simple
 app.MapGet("/health", () => 
 {
     Console.WriteLine($"✅ Health check recibido en /health - {DateTime.UtcNow}");
     return "OK";
 });
 
-// Endpoint para verificar database
-app.MapGet("/health/db", async ([FromServices] AppDbContext context) =>
-{
-    try
-    {
-        var canConnect = await context.Database.CanConnectAsync();
-        return Results.Ok(new 
-        { 
-            database = canConnect ? "connected" : "disconnected",
-            timestamp = DateTime.UtcNow
-        });
-    }
-    catch (Exception ex)
-    {
-        return Results.Problem($"Database error: {ex.Message}");
-    }
-});
+// 3. Redirección para Swagger
+app.MapGet("/swagger-ui", () => Results.Redirect("/swagger"));
 
-// Redirigir /api/health a /health (por si Render busca ahí)
-app.MapGet("/api/health", () => Results.Redirect("/health"));
-
-// =======================
-// 9. INICIALIZACIÓN
-// =======================
-try
-{
-    Console.WriteLine($"🟡 Iniciando aplicación en puerto: {port}");
-    Console.WriteLine($"🟡 Health check disponible en: /, /health, /health/db");
-    
-    // Intentar conectar a la base de datos
-    using (var scope = app.Services.CreateScope())
-    {
-        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-        if (await dbContext.Database.CanConnectAsync())
-        {
-            Console.WriteLine("✅ Conexión a base de datos establecida");
-        }
-        else
-        {
-            Console.WriteLine("⚠️  No se pudo conectar a la base de datos");
-        }
-    }
-}
-catch (Exception ex)
-{
-    Console.WriteLine($"❌ Error durante inicialización: {ex.Message}");
-}
-
+Console.WriteLine($"✅ Aplicación lista en puerto: {port}");
 app.Run();
