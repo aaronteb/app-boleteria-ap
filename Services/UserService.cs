@@ -122,5 +122,61 @@ namespace AppBoleteriaApi.Services
             user.IsActive = isActive;
             await _repo.UpdateAsync(user);
         }
+        public async Task<IEnumerable<UserResponseDto>> GetAllUsersAsync()
+                {
+                    var users = await _repo.GetAllAsync();
+                    return users.Select(u => new UserResponseDto
+                    {
+                        Id = u.Id,
+                        FullName = u.FullName,
+                        Email = u.Email,
+                        Phone = u.Phone,
+                        RoleId = u.RoleId,
+                        RoleName = u.Role?.Name ?? "Unknown",
+                        CompanyId = u.CompanyId,
+                        CompanyName = u.Company?.Name,
+                        IsActive = u.IsActive,
+                        CreatedAt = u.CreatedAt
+                    });
+        }
+
+        public async Task<IEnumerable<UserResponseDto>> GetUsersByCompanyAsync(int companyId)
+        {
+            var users = await _repo.GetByCompanyIdAsync(companyId);
+            return users.Select(u => new UserResponseDto
+            {
+                Id = u.Id,
+                FullName = u.FullName,
+                Email = u.Email,
+                Phone = u.Phone,
+                RoleId = u.RoleId,
+                RoleName = u.Role?.Name ?? "Unknown",
+                CompanyId = u.CompanyId,
+                CompanyName = u.Company?.Name,
+                IsActive = u.IsActive,
+                CreatedAt = u.CreatedAt
+            });
+        }
+
+        public async Task<UserResponseDto?> GetUserByIdAsync(int id)
+        {
+            var user = await _repo.GetByIdAsync(id);
+            if (user == null) return null;
+
+            return new UserResponseDto
+            {
+                Id = user.Id,
+                FullName = user.FullName,
+                Email = user.Email,
+                Phone = user.Phone,
+                RoleId = user.RoleId,
+                RoleName = user.Role?.Name ?? "Unknown",
+                CompanyId = user.CompanyId,
+                CompanyName = user.Company?.Name,
+                IsActive = user.IsActive,
+                CreatedAt = user.CreatedAt
+            };
+        }
     }
 }
+

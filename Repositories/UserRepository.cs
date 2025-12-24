@@ -50,5 +50,24 @@ namespace AppBoleteriaApi.Repositories
             await _context.SaveChangesAsync();
             return user;
         }
+        public async Task<IEnumerable<User>> GetAllAsync()
+        {
+            return await _context.Users
+                .Include(u => u.Role)
+                .Include(u => u.Company)
+                .Where(u => u.IsActive)
+                .OrderBy(u => u.FullName)
+                .ToListAsync();
+        }
+
+        public async Task<IEnumerable<User>> GetByCompanyIdAsync(int companyId)
+        {
+            return await _context.Users
+                .Include(u => u.Role)
+                .Include(u => u.Company)
+                .Where(u => u.CompanyId == companyId && u.IsActive)
+                .OrderBy(u => u.FullName)
+                .ToListAsync();
+        }
     }
 }
