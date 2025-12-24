@@ -44,34 +44,36 @@ builder.Services.AddCors(options =>
 builder.Services.AddDbContext<AppDbContext>(options =>
 {
     string connectionString;
-    
+
     // 1. Obtener la URL de Render
     var databaseUrl = Environment.GetEnvironmentVariable("DATABASE_URL");
-    
+
     if (!string.IsNullOrEmpty(databaseUrl))
     {
         // Parsear la URL de Render: postgresql://user:password@host:port/database
         var uri = new Uri(databaseUrl);
         var userInfo = uri.UserInfo.Split(':');
-        
+
         var host = uri.Host;
         var portDb = uri.Port > 0 ? uri.Port : 5432;
         var database = uri.AbsolutePath.TrimStart('/');
         var username = userInfo[0];
         var password = userInfo[1];
-        
+
         // Construir cadena de conexión para Npgsql
         connectionString = $"Host={host};Port={portDb};Database={database};Username={username};Password={password};SSL Mode=Require;Trust Server Certificate=true;";
-        
+
         Console.WriteLine($"✅ Usando base de datos de Render: {host}");
         Console.WriteLine($"📊 Base de datos: {database}");
     }
     else
     {
         // 2. Fallback a conexión local
-        connectionString = builder.Configuration.GetConnectionString("DefaultConnection") ?? 
+        connectionString = builder.Configuration.GetConnectionString("DefaultConnection") ??
                           "Host=localhost;Database=boleteria;Username=postgres;Password=postgres";
-    
+        Console.WriteLine($"⚠️  Usando conexión local");
+    }
+
     // Configurar Npgsql con la cadena de conexión
     options.UseNpgsql(connectionString, npgsqlOptions =>
     {
