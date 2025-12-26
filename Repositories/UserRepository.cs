@@ -55,7 +55,6 @@ namespace AppBoleteriaApi.Repositories
             return await _context.Users
                 .Include(u => u.Role)
                 .Include(u => u.Company)
-                .Where(u => u.IsActive)
                 .OrderBy(u => u.FullName)
                 .ToListAsync();
         }
@@ -65,7 +64,7 @@ namespace AppBoleteriaApi.Repositories
             return await _context.Users
                 .Include(u => u.Role)
                 .Include(u => u.Company)
-                .Where(u => u.CompanyId == companyId && u.IsActive)
+                .Where(u => u.CompanyId == companyId)
                 .OrderBy(u => u.FullName)
                 .ToListAsync();
         }
