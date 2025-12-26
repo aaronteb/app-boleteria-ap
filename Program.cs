@@ -10,32 +10,60 @@ using System.Text;
 var builder = WebApplication.CreateBuilder(args);
 
 // =======================
-// 1. CONFIGURAR PUERTO PARA RENDER
+// 1. CONFIGURAR PUERTO
 // =======================
-var port = Environment.GetEnvironmentVariable("PORT") ?? "10000";
-builder.WebHost.UseUrls($"http://*:{port}");
+var isDevelopment = builder.Environment.IsDevelopment();
+string port;
 
-Console.WriteLine($"🚀 Configurando para Render - Puerto: {port}");
-Console.WriteLine($"🌍 Entorno: {Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ?? "Production"}");
+if (isDevelopment)
+{
+    // En desarrollo local, usa el puerto 5237
+    port = "5237";
+    builder.WebHost.UseUrls($"http://0.0.0.0:{port}");
+    Console.WriteLine($"🔧 Modo Desarrollo - Puerto: {port}");
+}
+else
+{
+    // En Render, usa el puerto de la variable de entorno
+    port = Environment.GetEnvironmentVariable("PORT") ?? "10000";
+    builder.WebHost.UseUrls($"http://*:{port}");
+    Console.WriteLine($"🚀 Modo Producción (Render) - Puerto: {port}");
+}
+
+Console.WriteLine($"🌍 Entorno: {builder.Environment.EnvironmentName}");
 
 // =======================
-// 2. CORS
+// 2. CORS - DINÁMICO SEGÚN ENTORNO
 // =======================
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("ReactNativeApp",
-        policy => policy.WithOrigins(
-                    "http://localhost:19006",
-                    "http://localhost:19000",
-                    "http://10.0.2.2:5000",
-                    "http://192.168.180.146:19000",
-                    "http://192.168.180.146:5000",
-                    "https://*.onrender.com",
-                    "http://*.onrender.com"
-                )
-                .AllowAnyHeader()
-                .AllowAnyMethod()
-                .AllowCredentials());
+        policy =>
+        {
+            if (builder.Environment.IsDevelopment())
+            {
+                // ✅ En desarrollo, permite cualquier origen
+                policy.SetIsOriginAllowed(_ => true)
+                      .AllowAnyHeader()
+                      .AllowAnyMethod()
+                      .AllowCredentials();
+
+                Console.WriteLine("🌐 CORS: Permitiendo TODOS los orígenes (Desarrollo)");
+            }
+            else
+            {
+                // En producción, solo orígenes específicos
+                policy.WithOrigins(
+                        "https://*.onrender.com",
+                        "http://*.onrender.com"
+                    )
+                    .AllowAnyHeader()
+                    .AllowAnyMethod()
+                    .AllowCredentials();
+
+                Console.WriteLine("🔒 CORS: Solo orígenes de Render (Producción)");
+            }
+        });
 });
 
 // =======================
@@ -167,7 +195,8 @@ app.MapGet("/", () =>
         status = "healthy",
         service = "Boleteria API",
         timestamp = DateTime.UtcNow,
-        environment = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ?? "Production"
+        environment = app.Environment.EnvironmentName,
+        port = port
     });
 });
 
@@ -181,5 +210,5 @@ app.MapGet("/health", () =>
 // 3. Redirección para Swagger
 app.MapGet("/swagger-ui", () => Results.Redirect("/swagger"));
 
-Console.WriteLine($"✅ Aplicación lista en puerto: {port}");
+Console.WriteLine($"✅ Aplicación lista en http://0.0.0.0:{port}");
 app.Run();
