@@ -90,8 +90,10 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 // 4. JWT AUTHENTICATION
 // =======================
 var jwtKey = Environment.GetEnvironmentVariable("Jwt__Key") ??
-             builder.Configuration["Jwt:Key"] ??
-             "default-jwt-key-for-development-32-characters-long";
+             builder.Configuration["Jwt:Key"];
+
+if (string.IsNullOrWhiteSpace(jwtKey))
+    jwtKey = "default-jwt-key-for-development-32-characters-long";
 
 var key = Encoding.ASCII.GetBytes(jwtKey);
 
