@@ -172,54 +172,46 @@ namespace AppBoleteriaApi.Services
             });
         }
 
-        public async Task<IEnumerable<EventResponseDto>> GetMyEventsAsync(int organizerId)
+        public async Task<IEnumerable<EventResponseDto>> GetMyEventsAsync(int userId)
         {
             // Obtener el usuario para saber su compañía
             var user = await _context.Users
-                .FirstOrDefaultAsync(u => u.Id == organizerId);
+                .FirstOrDefaultAsync(u => u.Id == userId);
 
             if (user == null)
                 throw new Exception("Usuario no encontrado");
 
-            // Para usuarios Admin/Organizer/Staff
-            if (user.RoleId == 1 || user.RoleId == 3 || user.RoleId == 4)
+            if (user.CompanyId == null || user.CompanyId == 0)
+                return new List<EventResponseDto>();
+
+            var companyId = user.CompanyId.Value;
+            var events = await _context.Events
+                .Include(e => e.Organizer)
+                .Include(e => e.Company)
+                .Include(e => e.Venue)
+                .Include(e => e.TicketTypes.Where(tt => tt.IsActive))
+                    .ThenInclude(tt => tt.Tickets.Where(t => t.IsActive))
+                .Where(e => e.CompanyId == companyId && e.IsActive) 
+                .OrderByDescending(e => e.EventDateTime)
+                .ToListAsync();
+
+            return events.Select(e =>
             {
-                if (user.CompanyId == null || user.CompanyId == 0)
-                    throw new Exception("Usuario no tiene compañía asignada");
-
-                var companyId = user.CompanyId.Value;
-
-                var events = await _context.Events
-                    .Include(e => e.Organizer)
-                    .Include(e => e.Company)
-                    .Include(e => e.Venue)
-                    .Include(e => e.TicketTypes.Where(tt => tt.IsActive))
-                        .ThenInclude(tt => tt.Tickets.Where(t => t.IsActive))
-                    .Where(e => e.OrganizerId == organizerId && e.CompanyId == companyId && e.IsActive)
-                    .OrderByDescending(e => e.EventDateTime)
-                    .ToListAsync();
-
-                return events.Select(e =>
+                var response = MapToResponseDto(e);
+                response.TicketTypes = e.TicketTypes?.Select(tt => new TicketTypeWithSalesDto
                 {
-                    var response = MapToResponseDto(e);
-                    response.TicketTypes = e.TicketTypes?.Select(tt => new TicketTypeWithSalesDto
-                    {
-                        Id = tt.Id,
-                        Name = tt.Name,
-                        Price = tt.Price,
-                        Stock = tt.Stock,
-                        Sold = tt.Tickets?.Count ?? 0,
-                        Available = tt.Stock - (tt.Tickets?.Count ?? 0),
-                        Revenue = tt.Price * (tt.Tickets?.Count ?? 0)
-                    }).ToList();
-                    response.TotalTicketsSold = e.TicketTypes?.Sum(tt => tt.Tickets?.Count ?? 0) ?? 0;
-                    response.TotalRevenue = e.TicketTypes?.Sum(tt => tt.Price * (tt.Tickets?.Count ?? 0)) ?? 0;
-                    return response;
-                });
-            }
-
-            // Para usuarios normales (Attendees)
-            return new List<EventResponseDto>();
+                    Id = tt.Id,
+                    Name = tt.Name,
+                    Price = tt.Price,
+                    Stock = tt.Stock,
+                    Sold = tt.Tickets?.Count ?? 0,
+                    Available = tt.Stock - (tt.Tickets?.Count ?? 0),
+                    Revenue = tt.Price * (tt.Tickets?.Count ?? 0)
+                }).ToList();
+                response.TotalTicketsSold = e.TicketTypes?.Sum(tt => tt.Tickets?.Count ?? 0) ?? 0;
+                response.TotalRevenue = e.TicketTypes?.Sum(tt => tt.Price * (tt.Tickets?.Count ?? 0)) ?? 0;
+                return response;
+            });
         }
 
         public async Task<EventResponseDto?> UpdateAsync(int id, int organizerId, EventUpdateDto dto)

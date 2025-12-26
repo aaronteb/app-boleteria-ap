@@ -17,8 +17,7 @@ namespace AppBoleteriaApi.Repositories
         {
             try
             {
-                // ✅ IMPORTANTE: Asegurarse de que las propiedades de navegación sean null
-                // Entity Framework las cargará automáticamente basándose en los IDs
+               
                 eventModel.Company = null;
                 eventModel.Organizer = null;
                 eventModel.Venue = null;
