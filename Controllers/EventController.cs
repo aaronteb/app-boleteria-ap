@@ -18,6 +18,7 @@ namespace AppBoleteriaApi.Controllers
             _service = service;
         }
 
+        [AllowAnonymous] 
         [HttpGet]
         public async Task<IActionResult> GetAll()
         {
@@ -40,6 +41,7 @@ namespace AppBoleteriaApi.Controllers
             }
         }
 
+        [AllowAnonymous]  
         [HttpGet("{id}")]
         public async Task<IActionResult> GetById(int id)
         {
