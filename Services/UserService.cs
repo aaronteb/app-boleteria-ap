@@ -1,6 +1,8 @@
-﻿using AppBoleteriaApi.Model;
-using AppBoleteriaApi.Repositories;
+﻿using AppBoleteriaApi.Data;
 using AppBoleteriaApi.DTOs;
+using AppBoleteriaApi.Model;
+using AppBoleteriaApi.Repositories;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
@@ -14,16 +16,23 @@ namespace AppBoleteriaApi.Services
         private readonly IConfiguration _configuration;
         private readonly ITenantService _tenantService;
         private readonly IMenuRouteService _menuRouteService;
+        private readonly AppDbContext _context;
+        private readonly IHttpContextAccessor _httpContextAccessor;
 
-        public UserService(IUserRepository repo, IConfiguration configuration, ITenantService tenantService, IMenuRouteService menuRouteService)
+
+        public UserService(IUserRepository repo, IConfiguration configuration, ITenantService tenantService, IMenuRouteService menuRouteService, AppDbContext context , IHttpContextAccessor httpContextAccessor)
         {
             _repo = repo;
             _configuration = configuration;
             _tenantService = tenantService;
             _menuRouteService = menuRouteService;
+            _context = context;
+            _httpContextAccessor = httpContextAccessor;
         }
 
         public async Task<User> CreateAsync(UserRegisterDto userDto)
+
+
         {
             int? companyId = null;
 
@@ -114,48 +123,59 @@ namespace AppBoleteriaApi.Services
 
         public async Task ToggleUserStatusAsync(int userId, bool isActive)
         {
-            var user = await _repo.GetByIdAsync(userId);
+            var user = await _context.Users
+                .Include(u => u.Role)
+                .Include(u => u.Company)
+                .FirstOrDefaultAsync(u => u.Id == userId);
 
             if (user == null)
                 throw new Exception("Usuario no encontrado");
 
             user.IsActive = isActive;
-            await _repo.UpdateAsync(user);
+            await _context.SaveChangesAsync();
         }
         public async Task<IEnumerable<UserResponseDto>> GetAllUsersAsync()
+        {
+            var currentUserId = GetCurrentUserId(); // Obtiene del token
+            var users = await _repo.GetAllAsync();
+
+            return users
+                .Where(u => u.Id != currentUserId) // Excluye automáticamente
+                .Select(u => new UserResponseDto
                 {
-                    var users = await _repo.GetAllAsync();
-                    return users.Select(u => new UserResponseDto
-                    {
-                        Id = u.Id,
-                        FullName = u.FullName,
-                        Email = u.Email,
-                        Phone = u.Phone,
-                        RoleId = u.RoleId,
-                        RoleName = u.Role?.Name ?? "Unknown",
-                        CompanyId = u.CompanyId,
-                        CompanyName = u.Company?.Name,
-                        IsActive = u.IsActive,
-                        CreatedAt = u.CreatedAt
-                    });
+                    Id = u.Id,
+                    FullName = u.FullName,
+                    Email = u.Email,
+                    Phone = u.Phone,
+                    RoleId = u.RoleId,
+                    RoleName = u.Role?.Name ?? "Unknown",
+                    CompanyId = u.CompanyId,
+                    CompanyName = u.Company?.Name,
+                    IsActive = u.IsActive,
+                    CreatedAt = u.CreatedAt
+                });
         }
 
         public async Task<IEnumerable<UserResponseDto>> GetUsersByCompanyAsync(int companyId)
         {
+            var currentUserId = GetCurrentUserId(); 
             var users = await _repo.GetByCompanyIdAsync(companyId);
-            return users.Select(u => new UserResponseDto
-            {
-                Id = u.Id,
-                FullName = u.FullName,
-                Email = u.Email,
-                Phone = u.Phone,
-                RoleId = u.RoleId,
-                RoleName = u.Role?.Name ?? "Unknown",
-                CompanyId = u.CompanyId,
-                CompanyName = u.Company?.Name,
-                IsActive = u.IsActive,
-                CreatedAt = u.CreatedAt
-            });
+
+            return users
+                .Where(u => u.Id != currentUserId)
+                .Select(u => new UserResponseDto
+                {
+                    Id = u.Id,
+                    FullName = u.FullName,
+                    Email = u.Email,
+                    Phone = u.Phone,
+                    RoleId = u.RoleId,
+                    RoleName = u.Role?.Name ?? "Unknown",
+                    CompanyId = u.CompanyId,
+                    CompanyName = u.Company?.Name,
+                    IsActive = u.IsActive,
+                    CreatedAt = u.CreatedAt
+                });
         }
 
         public async Task<UserResponseDto?> GetUserByIdAsync(int id)
@@ -176,6 +196,17 @@ namespace AppBoleteriaApi.Services
                 IsActive = user.IsActive,
                 CreatedAt = user.CreatedAt
             };
+        }
+    
+    private int GetCurrentUserId()
+        {
+            var userIdClaim = _httpContextAccessor.HttpContext?.User
+                .FindFirst(ClaimTypes.NameIdentifier)?.Value;
+
+            if (string.IsNullOrEmpty(userIdClaim))
+                throw new UnauthorizedAccessException("Usuario no autenticado");
+
+            return int.Parse(userIdClaim);
         }
     }
 }
