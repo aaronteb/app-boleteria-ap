@@ -23,7 +23,8 @@ namespace AppBoleteriaApi.Services
                 ContactEmail = dto.ContactEmail,
                 ContactPhone = dto.ContactPhone,
                 CreatedAt = DateTime.UtcNow,
-                IsActive = true
+                IsActive = true,
+                PayPhoneEnabled = false // Nuevo campo - por defecto deshabilitado
             };
 
             var created = await _repo.CreateAsync(company);
@@ -91,6 +92,65 @@ namespace AppBoleteriaApi.Services
                 CreatedAt = c.CreatedAt,
                 IsActive = c.IsActive
             });
+        }
+
+        // ============================================
+        // MÉTODOS NUEVOS PARA PAYPHONE
+        // ============================================
+
+        public async Task<CompanyPayPhoneStatusDto> ConfigurePayPhoneAsync(int companyId, CompanyPayPhoneConfigDto dto)
+        {
+            var company = await _repo.GetByIdAsync(companyId);
+            if (company == null)
+                throw new Exception("Compañía no encontrada");
+
+            if (string.IsNullOrWhiteSpace(dto.PayPhoneToken))
+                throw new Exception("El token de PayPhone es requerido");
+
+            // Actualizar configuración de PayPhone
+            company.PayPhoneToken = dto.PayPhoneToken;
+            company.PayPhoneEnabled = dto.PayPhoneEnabled;
+
+            await _repo.UpdateAsync(company);
+
+            return new CompanyPayPhoneStatusDto
+            {
+                CompanyId = company.Id,
+                CompanyName = company.Name,
+                PayPhoneEnabled = company.PayPhoneEnabled,
+                HasToken = !string.IsNullOrEmpty(company.PayPhoneToken),
+                Message = "Configuración de PayPhone actualizada exitosamente"
+            };
+        }
+
+        public async Task<CompanyPayPhoneStatusDto> GetPayPhoneStatusAsync(int companyId)
+        {
+            var company = await _repo.GetByIdAsync(companyId);
+            if (company == null)
+                throw new Exception("Compañía no encontrada");
+
+            return new CompanyPayPhoneStatusDto
+            {
+                CompanyId = company.Id,
+                CompanyName = company.Name,
+                PayPhoneEnabled = company.PayPhoneEnabled,
+                HasToken = !string.IsNullOrEmpty(company.PayPhoneToken),
+                Message = company.PayPhoneEnabled
+                    ? "PayPhone está habilitado para esta compañía"
+                    : "PayPhone no está habilitado"
+            };
+        }
+
+        public async Task<bool> DisablePayPhoneAsync(int companyId)
+        {
+            var company = await _repo.GetByIdAsync(companyId);
+            if (company == null)
+                throw new Exception("Compañía no encontrada");
+
+            company.PayPhoneEnabled = false;
+            await _repo.UpdateAsync(company);
+
+            return true;
         }
     }
 }

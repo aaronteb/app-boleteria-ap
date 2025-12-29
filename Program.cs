@@ -17,14 +17,12 @@ string port;
 
 if (isDevelopment)
 {
-    // En desarrollo local, usa el puerto 5237
     port = "5237";
     builder.WebHost.UseUrls($"http://0.0.0.0:{port}");
     Console.WriteLine($"🔧 Modo Desarrollo - Puerto: {port}");
 }
 else
 {
-    // En Render, usa el puerto de la variable de entorno
     port = Environment.GetEnvironmentVariable("PORT") ?? "10000";
     builder.WebHost.UseUrls($"http://*:{port}");
     Console.WriteLine($"🚀 Modo Producción (Render) - Puerto: {port}");
@@ -40,32 +38,24 @@ builder.Services.AddCors(options =>
     options.AddPolicy("ReactNativeApp",
         policy =>
         {
-            if (builder.Environment.IsDevelopment())
-            {
-                // ✅ En desarrollo, permite cualquier origen
-                policy.SetIsOriginAllowed(_ => true)
-                      .AllowAnyHeader()
-                      .AllowAnyMethod()
-                      .AllowCredentials();
+            // PERMITE EXPLÍCITAMENTE LAS IPs LOCALES
+            policy.WithOrigins(
+                    "http://localhost:8081",          // Metro bundler
+                    "http://localhost:19006",         // Expo
+                    "http://192.168.180.146:8081",    // Tu IP con Metro
+                    "http://192.168.180.146:19006",   // Tu IP con Expo
+                    "http://127.0.0.1:8081",          // Localhost alternativo
+                    "http://0.0.0.0:8081",            // Todas las interfaces
+                    "capacitor://localhost",          // Capacitor
+                    "ionic://localhost"               // Ionic
+                )
+                .AllowAnyHeader()
+                .AllowAnyMethod()
+                .AllowCredentials();
 
-                Console.WriteLine("🌐 CORS: Permitiendo TODOS los orígenes (Desarrollo)");
-            }
-            else
-            {
-                // En producción, solo orígenes específicos
-                policy.WithOrigins(
-                        "https://*.onrender.com",
-                        "http://*.onrender.com"
-                    )
-                    .AllowAnyHeader()
-                    .AllowAnyMethod()
-                    .AllowCredentials();
-
-                Console.WriteLine("🔒 CORS: Solo orígenes de Render (Producción)");
-            }
+            Console.WriteLine("🌐 CORS: Configurado para React Native");
         });
 });
-
 // =======================
 // 3. DATABASE CONTEXT - CONEXIÓN PARA RENDER
 // =======================
@@ -73,12 +63,10 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 {
     string connectionString;
 
-    // 1. Obtener la URL de Render
     var databaseUrl = Environment.GetEnvironmentVariable("DATABASE_URL");
 
     if (!string.IsNullOrEmpty(databaseUrl))
     {
-        // Parsear la URL de Render: postgresql://user:password@host:port/database
         var uri = new Uri(databaseUrl);
         var userInfo = uri.UserInfo.Split(':');
 
@@ -88,7 +76,6 @@ builder.Services.AddDbContext<AppDbContext>(options =>
         var username = userInfo[0];
         var password = userInfo[1];
 
-        // Construir cadena de conexión para Npgsql
         connectionString = $"Host={host};Port={portDb};Database={database};Username={username};Password={password};SSL Mode=Require;Trust Server Certificate=true;";
 
         Console.WriteLine($"✅ Usando base de datos de Render: {host}");
@@ -96,17 +83,14 @@ builder.Services.AddDbContext<AppDbContext>(options =>
     }
     else
     {
-        // 2. Fallback a conexión local
         connectionString = builder.Configuration.GetConnectionString("DefaultConnection") ??
                           "Host=localhost;Database=boleteria;Username=postgres;Password=postgres";
         Console.WriteLine($"⚠️  Usando conexión local");
     }
 
-    // Configurar Npgsql con la cadena de conexión
     options.UseNpgsql(connectionString, npgsqlOptions =>
     {
         npgsqlOptions.MigrationsHistoryTable("__EFMigrationsHistory", "public");
-        // Configurar reintentos para producción
         npgsqlOptions.EnableRetryOnFailure(
             maxRetryCount: 5,
             maxRetryDelay: TimeSpan.FromSeconds(30),
@@ -160,11 +144,15 @@ builder.Services.AddScoped<ITicketService, TicketService>();
 builder.Services.AddScoped<IMenuRouteService, MenuRouteService>();
 builder.Services.AddScoped<IVenueService, VenueService>();
 
+// ⬇️⬇️⬇️ NUEVAS LÍNEAS PARA PAYPHONE ⬇️⬇️⬇️
+builder.Services.AddHttpClient<IPayPhoneService, PayPhoneService>();
+builder.Services.AddScoped<IPayPhoneService, PayPhoneService>();
+// ⬆️⬆️⬆️ FIN LÍNEAS NUEVAS ⬆️⬆️⬆️
+
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
-builder.Services.AddHttpContextAccessor();
 
 var app = builder.Build();
 
@@ -186,8 +174,6 @@ app.MapControllers();
 // =======================
 // 7. ENDPOINTS PARA RENDER
 // =======================
-
-// 1. Endpoint de health check para Render (EN LA RAÍZ)
 app.MapGet("/", () =>
 {
     Console.WriteLine($"✅ Health check recibido en / - {DateTime.UtcNow}");
@@ -201,15 +187,14 @@ app.MapGet("/", () =>
     });
 });
 
-// 2. Endpoint adicional simple
 app.MapGet("/health", () =>
 {
     Console.WriteLine($"✅ Health check recibido en /health - {DateTime.UtcNow}");
     return "OK";
 });
 
-// 3. Redirección para Swagger
 app.MapGet("/swagger-ui", () => Results.Redirect("/swagger"));
 
 Console.WriteLine($"✅ Aplicación lista en http://0.0.0.0:{port}");
+Console.WriteLine($"💳 PayPhone: Integración lista");
 app.Run();

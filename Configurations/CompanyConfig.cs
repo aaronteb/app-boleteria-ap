@@ -21,6 +21,8 @@ namespace AppBoleteriaApi.Configurations
             builder.Property(c => c.CreatedAt).HasColumnName("CreatedAt").HasDefaultValueSql("now()");
             builder.Property(c => c.IsActive).HasColumnName("IsActive").HasDefaultValue(true);
             builder.HasIndex(c => c.Slug).IsUnique();
+            builder.Property(c => c.PayPhoneToken).HasColumnName("PayPhoneToken");
+            builder.Property(c => c.PayPhoneEnabled).HasColumnName("PayPhoneEnabled").HasDefaultValue(false);
         }
     }
 }

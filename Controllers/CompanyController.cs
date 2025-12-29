@@ -126,12 +126,9 @@ namespace AppBoleteriaApi.Controllers
         }
 
         // ====================================
-        // NUEVOS ENDPOINTS PARA GESTIÓN DE USUARIOS
+        // ENDPOINTS PARA GESTIÓN DE USUARIOS
         // ====================================
 
-        /// <summary>
-        /// Admin: Listar usuarios de una compañía específica
-        /// </summary>
         [Authorize(Roles = "Admin")]
         [HttpGet("{id}/users")]
         public async Task<IActionResult> GetCompanyUsers(int id)
@@ -155,9 +152,6 @@ namespace AppBoleteriaApi.Controllers
             }
         }
 
-        /// <summary>
-        /// Admin de Compañía: Listar usuarios de MI compañía
-        /// </summary>
         [Authorize(Roles = "Admin")]
         [HttpGet("my-users")]
         public async Task<IActionResult> GetMyCompanyUsers()
@@ -194,9 +188,6 @@ namespace AppBoleteriaApi.Controllers
             }
         }
 
-        /// <summary>
-        /// Admin: Crear usuario en una compañía (requiere header X-Company-Slug)
-        /// </summary>
         [Authorize(Roles = "Admin")]
         [HttpPost("users")]
         public async Task<IActionResult> CreateUser([FromBody] UserRegisterDto dto)
@@ -237,9 +228,6 @@ namespace AppBoleteriaApi.Controllers
             }
         }
 
-        /// <summary>
-        /// Admin: Activar/Desactivar usuario
-        /// </summary>
         [Authorize(Roles = "Admin")]
         [HttpPut("users/{userId}/toggle-status")]
         public async Task<IActionResult> ToggleUserStatus(int userId, [FromBody] ToggleStatusDto dto)
@@ -251,6 +239,89 @@ namespace AppBoleteriaApi.Controllers
                 {
                     success = true,
                     message = dto.IsActive ? "Usuario activado" : "Usuario desactivado"
+                });
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message = ex.Message
+                });
+            }
+        }
+
+        // ============================================
+        // ⬇️⬇️⬇️ NUEVOS ENDPOINTS PARA PAYPHONE ⬇️⬇️⬇️
+        // ============================================
+
+        /// <summary>
+        /// Configurar PayPhone para una compañía (Solo Admin/Owner)
+        /// </summary>
+        [HttpPost("{companyId}/payphone/configure")]
+        [Authorize(Roles = "Admin")]
+        public async Task<IActionResult> ConfigurePayPhone(int companyId, [FromBody] CompanyPayPhoneConfigDto dto)
+        {
+            try
+            {
+                var result = await _companyService.ConfigurePayPhoneAsync(companyId, dto);
+                return Ok(new
+                {
+                    success = true,
+                    message = result.Message,
+                    data = result
+                });
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message = ex.Message
+                });
+            }
+        }
+
+        /// <summary>
+        /// Obtener estado de PayPhone de una compañía
+        /// </summary>
+        [HttpGet("{companyId}/payphone/status")]
+        [Authorize]
+        public async Task<IActionResult> GetPayPhoneStatus(int companyId)
+        {
+            try
+            {
+                var status = await _companyService.GetPayPhoneStatusAsync(companyId);
+                return Ok(new
+                {
+                    success = true,
+                    data = status
+                });
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new
+                {
+                    success = false,
+                    message = ex.Message
+                });
+            }
+        }
+
+        /// <summary>
+        /// Deshabilitar PayPhone para una compañía
+        /// </summary>
+        [HttpPost("{companyId}/payphone/disable")]
+        [Authorize(Roles = "Admin")]
+        public async Task<IActionResult> DisablePayPhone(int companyId)
+        {
+            try
+            {
+                await _companyService.DisablePayPhoneAsync(companyId);
+                return Ok(new
+                {
+                    success = true,
+                    message = "PayPhone deshabilitado exitosamente"
                 });
             }
             catch (Exception ex)

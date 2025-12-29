@@ -21,6 +21,12 @@ namespace AppBoleteriaApi.Configurations
             builder.Property(t => t.Status).HasColumnName("Status").HasMaxLength(20);
             builder.Property(t => t.CreatedAt).HasColumnName("CreatedAt").HasDefaultValueSql("now()");
             builder.Property(t => t.IsActive).HasColumnName("IsActive").HasDefaultValue(true);
+            builder.Property(t => t.PayPhoneTransactionId).HasColumnName("PayPhoneTransactionId").HasMaxLength(100);
+            builder.Property(t => t.PayPhonePaymentId).HasColumnName("PayPhonePaymentId").HasMaxLength(100);
+            builder.Property(t => t.Reference).HasColumnName("Reference").HasMaxLength(100);
+            builder.Property(t => t.TicketTypeId).HasColumnName("TicketTypeId");
+            builder.Property(t => t.Quantity).HasColumnName("Quantity");
+            builder.Property(t => t.UpdatedAt).HasColumnName("UpdatedAt");
 
             builder.HasOne(t => t.Company)
                 .WithMany()

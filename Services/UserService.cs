@@ -31,15 +31,13 @@ namespace AppBoleteriaApi.Services
         }
 
         public async Task<User> CreateAsync(UserRegisterDto userDto)
-
-
         {
+          
             int? companyId = null;
 
-            if (userDto.RoleId == 1 || userDto.RoleId == 3 || userDto.RoleId == 4) 
+            if (userDto.RoleId == 1 || userDto.RoleId == 3 || userDto.RoleId == 4)
             {
                 companyId = _tenantService.GetCompanyId();
-
                 if (companyId == 0)
                     throw new Exception("Company no especificada. Use el header X-Company-Slug para crear Admin/Organizer/Staff");
             }
@@ -55,7 +53,6 @@ namespace AppBoleteriaApi.Services
                 CreatedAt = DateTime.UtcNow,
                 IsActive = true
             };
-
             return await _repo.CreateAsync(user);
         }
 
