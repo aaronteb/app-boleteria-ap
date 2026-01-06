@@ -22,7 +22,7 @@ namespace AppBoleteriaApi.Controllers
         }
 
         /// <summary>
-        /// Iniciar proceso de pago con PayPhone
+        /// Iniciar proceso de pago - Retorna datos para la Cajita de Pagos
         /// </summary>
         [Authorize]
         [HttpPost("initiate")]
@@ -46,7 +46,6 @@ namespace AppBoleteriaApi.Controllers
 
                 var result = await _payPhoneService.InitiatePaymentAsync(userId, dto);
 
-                // ⚠️ CRÍTICO: Si el servicio retorna success: false, devolver BadRequest
                 if (!result.Success)
                 {
                     _logger.LogWarning($"⚠️ Pago no iniciado: {result.Message}");
@@ -54,20 +53,15 @@ namespace AppBoleteriaApi.Controllers
                     return BadRequest(new
                     {
                         success = false,
-                        message = result.Message,
-                        data = new
-                        {
-                            transactionId = result.TransactionId,
-                            reference = result.Reference
-                        }
+                        message = result.Message
                     });
                 }
 
-                // ✅ Pago iniciado exitosamente
+                // ✅ Retornar datos para inicializar la Cajita en el frontend
                 return Ok(new
                 {
                     success = true,
-                    message = "Pago iniciado exitosamente",
+                    message = "Datos preparados para la Cajita de Pagos",
                     data = result
                 });
             }
@@ -83,47 +77,59 @@ namespace AppBoleteriaApi.Controllers
             }
         }
 
-        [Authorize]
-        [HttpPost("confirm/{transactionId}")]
-        public async Task<IActionResult> ConfirmPayment(string transactionId)
+        /// <summary>
+        /// 🆕 NUEVO: Confirmar pago desde la URL de respuesta de la Cajita
+        /// Este endpoint se llama cuando PayPhone redirige después del pago
+        /// Parámetros vienen en la URL: ?id=123&clientTransactionId=BOL-1-20250106120000
+        /// </summary>
+        [AllowAnonymous] // Permitir acceso sin auth porque viene de PayPhone
+        [HttpGet("confirm-cajita")]
+        public async Task<IActionResult> ConfirmPaymentFromCajita([FromQuery] long id, [FromQuery] string clientTransactionId)
         {
             try
             {
-                _logger.LogInformation($"🔍 Confirmando pago - Transacción: {transactionId}");
+                _logger.LogInformation($"🔔 WEBHOOK recibido de PayPhone - ID: {id}, ClientTxId: {clientTransactionId}");
 
-                var success = await _payPhoneService.ConfirmPaymentAsync(transactionId);
-
-                if (success)
+                var dto = new ConfirmPaymentFromCajitaDto
                 {
-                    return Ok(new
-                    {
-                        success = true,
-                        message = "Pago confirmado exitosamente. Tickets generados.",
-                        status = "Approved"
-                    });
+                    Id = id,
+                    ClientTxId = clientTransactionId
+                };
+
+                var result = await _payPhoneService.ConfirmPaymentFromCajitaAsync(dto);
+
+                _logger.LogInformation($"✅ Confirmación procesada - StatusCode: {result.StatusCode}, Status: {result.TransactionStatus}");
+
+                // 🎯 Redirigir según el resultado
+                if (result.StatusCode == 3) // APROBADO
+                {
+                    // ✅ Redirigir a una URL que el WebView detectará
+                    // Puedes usar un scheme personalizado o una ruta específica
+                    return Redirect($"/payment-success?ref={clientTransactionId}&txId={result.TransactionId}");
                 }
-                else
+                else if (result.StatusCode == 2) // CANCELADO
                 {
-                    return Ok(new
-                    {
-                        success = false,
-                        message = "El pago aún está pendiente o fue rechazado",
-                        status = "Pending/Rejected"
-                    });
+                    // ❌ Redirigir a página de cancelación
+                    return Redirect($"/payment-cancelled?ref={clientTransactionId}");
+                }
+                else // PENDIENTE u otro estado
+                {
+                    // ⏳ Redirigir a página de pendiente
+                    return Redirect($"/payment-pending?ref={clientTransactionId}");
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogError($"❌ Error en ConfirmPayment: {ex.Message}");
+                _logger.LogError($"❌ Error en ConfirmPaymentFromCajita: {ex.Message}");
 
-                return BadRequest(new
-                {
-                    success = false,
-                    message = $"Error al confirmar el pago: {ex.Message}"
-                });
+                // Redirigir a página de error
+                return Redirect($"/payment-error?message={Uri.EscapeDataString(ex.Message)}");
             }
         }
 
+        /// <summary>
+        /// Obtener estado de una transacción desde la BD
+        /// </summary>
         [Authorize]
         [HttpGet("status/{transactionId}")]
         public async Task<IActionResult> GetTransactionStatus(string transactionId)
@@ -159,6 +165,9 @@ namespace AppBoleteriaApi.Controllers
             }
         }
 
+        /// <summary>
+        /// Consultar estado directamente en PayPhone (para verificaciones manuales)
+        /// </summary>
         [Authorize]
         [HttpGet("check-payphone/{transactionId}")]
         public async Task<IActionResult> CheckPayPhoneStatus(string transactionId)
@@ -184,22 +193,6 @@ namespace AppBoleteriaApi.Controllers
                     success = false,
                     message = $"Error al consultar PayPhone: {ex.Message}"
                 });
-            }
-        }
-
-        [AllowAnonymous]
-        [HttpPost("webhook")]
-        public async Task<IActionResult> PayPhoneWebhook([FromBody] dynamic callback)
-        {
-            try
-            {
-                _logger.LogInformation($"📨 Webhook recibido de PayPhone: {callback}");
-                return Ok(new { received = true });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError($"❌ Error en webhook: {ex.Message}");
-                return Ok(new { received = true, error = ex.Message });
             }
         }
     }

@@ -27,11 +27,11 @@ namespace AppBoleteriaApi.Services
             _logger = logger;
         }
 
-        #region Iniciar Pago
+        #region Iniciar Pago (Preparar datos para la Cajita)
 
         public async Task<InitiatePaymentResponse> InitiatePaymentAsync(int userId, InitiatePaymentDto dto)
         {
-            _logger.LogInformation($"🎫 Iniciando pago - Usuario: {userId}, TicketType: {dto.TicketTypeId}, Cantidad: {dto.Quantity}");
+            _logger.LogInformation($"🎫 Preparando datos para Cajita - Usuario: {userId}, TicketType: {dto.TicketTypeId}, Cantidad: {dto.Quantity}");
 
             // 1. Obtener usuario que compra
             var user = await _context.Users.FindAsync(userId);
@@ -55,15 +55,15 @@ namespace AppBoleteriaApi.Services
 
             // 3. Validar configuración de PayPhone
             if (!company.PayPhoneEnabled)
-                throw new Exception($"Lo sentimos, los pagos en línea no están disponibles en este momento. Por favor contacta al organizador.");
+                throw new Exception("Lo sentimos, los pagos en línea no están disponibles en este momento. Por favor contacta al organizador.");
 
             if (string.IsNullOrEmpty(company.PayPhoneToken))
-                throw new Exception($"Configuración de pagos incompleta. Por favor contacta al organizador.");
+                throw new Exception("Configuración de pagos incompleta. Por favor contacta al organizador.");
 
             if (string.IsNullOrEmpty(company.PayPhoneStoreId))
-                throw new Exception($"Configuración de pagos incompleta. Por favor contacta al organizador.");
+                throw new Exception("Configuración de pagos incompleta. Por favor contacta al organizador.");
 
-            // 4. Calcular montos (en CENTAVOS según documentación)
+            // 4. Calcular montos (en CENTAVOS)
             var unitPriceInCents = (int)(ticketType.Price * 100);
             var totalAmountInCents = unitPriceInCents * dto.Quantity;
             var reference = $"BOL-{company.Id}-{DateTime.UtcNow:yyyyMMddHHmmss}";
@@ -90,31 +90,64 @@ namespace AppBoleteriaApi.Services
 
             _logger.LogInformation($"✅ Transacción creada - ID: {transaction.Id}, Referencia: {reference}");
 
+            // 6. ✅ RETORNAR DATOS PARA LA CAJITA (el pago se completa en el frontend)
+            return new InitiatePaymentResponse
+            {
+                Success = true,
+                Message = "Datos preparados para iniciar pago con la Cajita",
+                TransactionId = transaction.Id.ToString(),
+                Reference = reference,
+                TotalAmount = ticketType.Price * dto.Quantity,
+                EventTitle = eventInfo.Title,
+                Quantity = dto.Quantity,
+
+                // 🆕 Datos necesarios para inicializar la Cajita en el frontend
+                Token = company.PayPhoneToken!,
+                StoreId = company.PayPhoneStoreId!,
+                AmountInCents = totalAmountInCents,
+                PhoneNumber = $"{user.CountryCode ?? "593"}{user.Phone}",
+                Email = user.Email,
+                Currency = company.PayPhoneCurrency ?? "USD",
+                TimeZone = company.PayPhoneTimeZone ?? -5
+            };
+        }
+
+        #endregion
+
+        #region Confirmar Pago desde la Cajita (API Button/V2/Confirm)
+
+        /// <summary>
+        /// Confirma el pago después de que el usuario complete el proceso en la Cajita
+        /// Este método se llama desde la URL de respuesta configurada en PayPhone
+        /// </summary>
+        public async Task<CajitaConfirmResponse> ConfirmPaymentFromCajitaAsync(ConfirmPaymentFromCajitaDto dto)
+        {
+            _logger.LogInformation($"🔍 Confirmando pago desde Cajita - PayPhone ID: {dto.Id}, ClientTxId: {dto.ClientTxId}");
+
+            // 1. Buscar transacción por Reference
+            var transaction = await _context.Transactions
+                .Include(t => t.Company)
+                .FirstOrDefaultAsync(t => t.Reference == dto.ClientTxId);
+
+            if (transaction == null)
+                throw new Exception("Transacción no encontrada");
+
+            if (transaction.Company == null || string.IsNullOrEmpty(transaction.Company.PayPhoneToken))
+                throw new Exception("Configuración de pago no encontrada");
+
             try
             {
-                // 6. Preparar request para PayPhone API Sale
-                var payPhoneRequest = new PayPhoneSaleRequest
+                // 2. Llamar a la API Button/V2/Confirm de PayPhone
+                var confirmRequest = new
                 {
-                    PhoneNumber = user.Phone,
-                    CountryCode = user.CountryCode ?? "593",
-                    Amount = totalAmountInCents,
-                    AmountWithoutTax = totalAmountInCents,
-                    AmountWithTax = 0,
-                    Tax = 0,
-                    ClientTransactionId = reference,
-                    Reference = $"{dto.Quantity} ticket(s) - {eventInfo.Title}",
-                    StoreId = company.PayPhoneStoreId!,
-                    Currency = company.PayPhoneCurrency ?? "USD",
-                    TimeZone = company.PayPhoneTimeZone ?? -5
+                    id = dto.Id,
+                    clientTxId = dto.ClientTxId
                 };
 
-                _logger.LogInformation($"📡 Enviando a PayPhone API Sale...");
-
-                // 7. Llamar a PayPhone API Sale
-                var request = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/Sale");
-                request.Headers.Add("Authorization", $"Bearer {company.PayPhoneToken}");
+                var request = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/button/V2/Confirm");
+                request.Headers.Add("Authorization", $"Bearer {transaction.Company.PayPhoneToken}");
                 request.Content = new StringContent(
-                    JsonSerializer.Serialize(payPhoneRequest),
+                    JsonSerializer.Serialize(confirmRequest),
                     Encoding.UTF8,
                     "application/json"
                 );
@@ -122,74 +155,70 @@ namespace AppBoleteriaApi.Services
                 var response = await _httpClient.SendAsync(request);
                 var responseContent = await response.Content.ReadAsStringAsync();
 
-                _logger.LogInformation($"📥 Respuesta PayPhone: {(int)response.StatusCode} - {responseContent}");
+                _logger.LogInformation($"📥 Respuesta PayPhone Confirm: {(int)response.StatusCode} - {responseContent}");
 
                 if (!response.IsSuccessStatusCode)
                 {
-                    _logger.LogError($"❌ Error PayPhone: {responseContent}");
-
-                    // Marcar transacción como fallida
-                    transaction.Status = "Failed";
-                    transaction.UpdatedAt = DateTime.UtcNow;
-                    await _context.SaveChangesAsync();
-
-                    // ⚠️ Procesar el error para dar un mensaje amigable
-                    var friendlyMessage = ProcessPayPhoneError(responseContent);
-                    throw new Exception(friendlyMessage);
+                    _logger.LogError($"❌ Error al confirmar en PayPhone: {responseContent}");
+                    throw new Exception("No se pudo confirmar el pago con PayPhone");
                 }
 
-                var payPhoneResponse = JsonSerializer.Deserialize<PayPhoneSaleResponse>(
+                var confirmResponse = JsonSerializer.Deserialize<CajitaConfirmResponse>(
                     responseContent,
                     new JsonSerializerOptions { PropertyNameCaseInsensitive = true }
                 );
 
-                if (payPhoneResponse == null || payPhoneResponse.TransactionId == 0)
+                if (confirmResponse == null)
+                    throw new Exception("Respuesta inválida de PayPhone");
+
+                // 3. Procesar según el estado
+                if (confirmResponse.StatusCode == 3) // APROBADO
                 {
-                    transaction.Status = "Failed";
+                    _logger.LogInformation($"✅ Pago APROBADO - Generando tickets...");
+
+                    // Actualizar transacción
+                    transaction.Status = "Approved";
+                    transaction.PayPhoneTransactionId = confirmResponse.TransactionId.ToString();
                     transaction.UpdatedAt = DateTime.UtcNow;
+
+                    // Generar tickets
+                    var purchaseDto = new TicketPurchaseDto
+                    {
+                        TicketTypeId = transaction.TicketTypeId,
+                        Quantity = transaction.Quantity
+                    };
+
+                    var tickets = await _ticketService.PurchaseTicketsAsync(
+                        transaction.UserId ?? 0,
+                        purchaseDto
+                    );
+
                     await _context.SaveChangesAsync();
 
-                    throw new Exception("No se pudo procesar tu solicitud de pago. Por favor intenta nuevamente.");
+                    _logger.LogInformation($"🎫 {tickets.Count} ticket(s) generados exitosamente");
+                }
+                else if (confirmResponse.StatusCode == 2) // CANCELADO
+                {
+                    _logger.LogWarning($"❌ Pago CANCELADO");
+
+                    transaction.Status = "Cancelled";
+                    transaction.PayPhoneTransactionId = confirmResponse.TransactionId.ToString();
+                    transaction.UpdatedAt = DateTime.UtcNow;
+                    await _context.SaveChangesAsync();
                 }
 
-                // 8. Actualizar transacción con datos de PayPhone
-                transaction.PayPhoneTransactionId = payPhoneResponse.TransactionId.ToString();
-                transaction.UpdatedAt = DateTime.UtcNow;
-                await _context.SaveChangesAsync();
-
-                _logger.LogInformation($"✅ Pago iniciado - PayPhone TransactionId: {payPhoneResponse.TransactionId}");
-
-                // ✅ RETORNAR ÉXITO CON TODOS LOS DATOS
-                return new InitiatePaymentResponse
-                {
-                    Success = true,
-                    Message = "Pago iniciado correctamente",
-                    TransactionId = transaction.Id.ToString(),
-                    Reference = reference,
-                    TotalAmount = ticketType.Price * dto.Quantity,
-                    EventTitle = eventInfo.Title,
-                    Quantity = dto.Quantity,
-                    PayPhoneTransactionId = payPhoneResponse.TransactionId.ToString(),
-                    PaymentUrl = null
-                };
+                return confirmResponse;
             }
             catch (Exception ex)
             {
-                _logger.LogError($"❌ Error en InitiatePaymentAsync: {ex.Message}");
-
-                // Marcar transacción como fallida
-                transaction.Status = "Failed";
-                transaction.UpdatedAt = DateTime.UtcNow;
-                await _context.SaveChangesAsync();
-
-                // ⚠️ IMPORTANTE: LANZAR LA EXCEPCIÓN para que llegue al controller
+                _logger.LogError($"❌ Error en ConfirmPaymentFromCajitaAsync: {ex.Message}");
                 throw;
             }
         }
 
         #endregion
 
-        #region Consultar Estado
+        #region Consultar Estado (mantener para verificaciones)
 
         public async Task<PayPhoneStatusResponse> CheckPaymentStatusAsync(string transactionId)
         {
@@ -233,7 +262,7 @@ namespace AppBoleteriaApi.Services
                 if (!response.IsSuccessStatusCode)
                 {
                     _logger.LogError($"❌ Error al consultar estado: {responseContent}");
-                    throw new Exception($"No se pudo verificar el estado del pago. Por favor intenta nuevamente.");
+                    throw new Exception("No se pudo verificar el estado del pago. Por favor intenta nuevamente.");
                 }
 
                 var statusResponse = JsonSerializer.Deserialize<PayPhoneStatusResponse>(
@@ -257,15 +286,15 @@ namespace AppBoleteriaApi.Services
 
         #endregion
 
-        #region Confirmar Pago
+        #region Confirmar Pago (DEPRECADO - usar ConfirmPaymentFromCajitaAsync)
 
+        [Obsolete("Usar ConfirmPaymentFromCajitaAsync para la Cajita de Pagos")]
         public async Task<bool> ConfirmPaymentAsync(string transactionId)
         {
-            _logger.LogInformation($"✅ Confirmando pago - Transacción: {transactionId}");
+            _logger.LogInformation($"⚠️ DEPRECADO: ConfirmPaymentAsync llamado - Transacción: {transactionId}");
 
-            // 1. Buscar transacción
+            // Mantener por compatibilidad, pero ya no se usa con la Cajita
             var transaction = await _context.Transactions
-                .Include(t => t.Company)
                 .FirstOrDefaultAsync(t =>
                     t.Id.ToString() == transactionId ||
                     t.Reference == transactionId);
@@ -273,63 +302,13 @@ namespace AppBoleteriaApi.Services
             if (transaction == null)
                 throw new Exception("Transacción no encontrada");
 
-            // 2. Si ya está aprobada, retornar true
             if (transaction.Status == "Approved")
             {
                 _logger.LogInformation($"✅ Transacción ya aprobada: {transaction.Reference}");
                 return true;
             }
 
-            // 3. Consultar estado en PayPhone
-            var status = await CheckPaymentStatusAsync(transactionId);
-
-            // 4. Procesar según el estado
-            if (status.StatusCode == 3) // APROBADO
-            {
-                _logger.LogInformation($"💳 Pago APROBADO - Generando tickets...");
-
-                try
-                {
-                    // Generar tickets
-                    var purchaseDto = new TicketPurchaseDto
-                    {
-                        TicketTypeId = transaction.TicketTypeId,
-                        Quantity = transaction.Quantity
-                    };
-
-                    var tickets = await _ticketService.PurchaseTicketsAsync(
-                        transaction.UserId ?? 0,
-                        purchaseDto
-                    );
-
-                    // Actualizar transacción
-                    transaction.Status = "Approved";
-                    transaction.UpdatedAt = DateTime.UtcNow;
-                    await _context.SaveChangesAsync();
-
-                    _logger.LogInformation($"🎫 {tickets.Count} ticket(s) generados exitosamente");
-                    return true;
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError($"❌ Error al generar tickets: {ex.Message}");
-                    throw new Exception($"Tu pago fue aprobado pero hubo un problema al generar los tickets. Por favor contacta a soporte con tu referencia: {transaction.Reference}");
-                }
-            }
-            else if (status.StatusCode == 2) // RECHAZADO
-            {
-                _logger.LogWarning($"❌ Pago RECHAZADO");
-
-                transaction.Status = "Rejected";
-                transaction.UpdatedAt = DateTime.UtcNow;
-                await _context.SaveChangesAsync();
-                return false;
-            }
-            else // PENDIENTE (StatusCode == 1)
-            {
-                _logger.LogInformation($"⏳ Pago aún PENDIENTE");
-                return false;
-            }
+            return false;
         }
 
         #endregion
@@ -369,87 +348,8 @@ namespace AppBoleteriaApi.Services
 
         #endregion
 
-        #region Helpers Privados
+        #region Verificar Transacciones Pendientes
 
-        /// <summary>
-        /// Procesa los errores de PayPhone y retorna mensajes amigables para el usuario
-        /// </summary>
-        private string ProcessPayPhoneError(string errorResponse)
-        {
-            try
-            {
-                var errorObj = JsonSerializer.Deserialize<PayPhoneErrorResponse>(
-                    errorResponse,
-                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true }
-                );
-
-                if (errorObj != null && !string.IsNullOrEmpty(errorObj.Message))
-                {
-                    var errorCode = errorObj.ErrorCode ?? 0;
-
-                    return errorCode switch
-                    {
-                        120 => "🚫 Tu número de teléfono no está registrado en PayPhone.\n\n" +
-                               "📱 Para completar tu compra:\n" +
-                               "1. Descarga la app PayPhone (Play Store/App Store)\n" +
-                               "2. Regístrate con tu número de teléfono\n" +
-                               "3. Vuelve aquí y completa tu compra\n\n" +
-                               "¿Necesitas ayuda? Contacta a soporte.",
-
-                        121 => "⚠️ Tu cuenta de PayPhone está inactiva.\n\n" +
-                               "Por favor:\n" +
-                               "1. Abre la app PayPhone\n" +
-                               "2. Activa tu cuenta siguiendo las instrucciones\n" +
-                               "3. Vuelve a intentar tu compra\n\n" +
-                               "Si necesitas ayuda, contacta al soporte de PayPhone.",
-
-                        122 => "📞 El número de teléfono no tiene el formato correcto.\n\n" +
-                               "Por favor:\n" +
-                               "1. Ve a tu perfil\n" +
-                               "2. Verifica que tu número esté en formato correcto (ej: 0987654321)\n" +
-                               "3. Actualiza tu número si es necesario\n" +
-                               "4. Intenta nuevamente",
-
-                        130 => "💰 No tienes saldo suficiente en tu cuenta PayPhone.\n\n" +
-                               "Para completar tu compra:\n" +
-                               "1. Abre la app PayPhone\n" +
-                               "2. Recarga tu cuenta\n" +
-                               "3. Vuelve aquí y completa tu compra\n\n" +
-                               $"Monto requerido: Verifica en tu carrito",
-
-                        140 => "❌ La transacción fue rechazada.\n\n" +
-                               "Esto puede ocurrir por:\n" +
-                               "• Saldo insuficiente\n" +
-                               "• Límites de transacción excedidos\n" +
-                               "• Problemas con tu cuenta\n\n" +
-                               "Por favor verifica tu cuenta PayPhone e intenta nuevamente.",
-
-                        150 => "📊 El monto supera tu límite diario de transacciones.\n\n" +
-                               "Puedes:\n" +
-                               "1. Aumentar tu límite desde la app PayPhone\n" +
-                               "2. Intentar con menos tickets\n" +
-                               "3. Esperar hasta mañana para completar la compra",
-
-                        _ => $"⚠️ {errorObj.Message}\n\n" +
-                             "Si el problema persiste:\n" +
-                             "• Verifica tu cuenta PayPhone\n" +
-                             "• Contacta con nuestro soporte\n" +
-                             "• Intenta otro método de pago"
-                    };
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning($"No se pudo parsear error de PayPhone: {ex.Message}");
-            }
-
-            return "😕 Hubo un problema al procesar tu pago con PayPhone.\n\n" +
-                   "Por favor verifica:\n" +
-                   "• Tu cuenta PayPhone está activa\n" +
-                   "• Tienes saldo suficiente\n" +
-                   "• Tu número está registrado correctamente\n\n" +
-                   "Si el problema persiste, contacta con soporte o intenta otro método de pago.";
-        }
         public async Task VerifyAndUpdatePendingTransactionsAsync(int userId)
         {
             _logger.LogInformation($"🔍 Verificando transacciones pendientes para usuario: {userId}");
@@ -460,7 +360,7 @@ namespace AppBoleteriaApi.Services
                     t.UserId == userId &&
                     t.Status == "Pending" &&
                     t.IsActive &&
-                    t.CreatedAt >= DateTime.UtcNow.AddDays(-1)) 
+                    t.CreatedAt >= DateTime.UtcNow.AddDays(-1))
                 .ToListAsync();
 
             if (!pendingTransactions.Any())
@@ -475,9 +375,15 @@ namespace AppBoleteriaApi.Services
             {
                 try
                 {
+                    // Solo verificar si tiene PayPhoneTransactionId
+                    if (string.IsNullOrEmpty(transaction.PayPhoneTransactionId))
+                    {
+                        _logger.LogDebug($"⏭️ Transacción {transaction.Reference} sin PayPhoneTransactionId (aún no completada en Cajita)");
+                        continue;
+                    }
+
                     _logger.LogInformation($"🔄 Verificando transacción: {transaction.Reference}");
 
-                    // Consultar estado en PayPhone
                     var status = await CheckPaymentStatusAsync(transaction.Id.ToString());
 
                     if (status == null)
@@ -486,12 +392,10 @@ namespace AppBoleteriaApi.Services
                         continue;
                     }
 
-                    // Actualizar según el estado
-                    if (status.StatusCode == 3 && transaction.Status != "Approved") // APROBADO
+                    if (status.StatusCode == 3 && transaction.Status != "Approved")
                     {
                         _logger.LogInformation($"✅ Transacción APROBADA: {transaction.Reference}");
 
-                        // Generar tickets
                         try
                         {
                             var purchaseDto = new TicketPurchaseDto
@@ -505,7 +409,6 @@ namespace AppBoleteriaApi.Services
                                 purchaseDto
                             );
 
-                            // Actualizar transacción
                             transaction.Status = "Approved";
                             transaction.UpdatedAt = DateTime.UtcNow;
 
@@ -514,35 +417,27 @@ namespace AppBoleteriaApi.Services
                         catch (Exception ex)
                         {
                             _logger.LogError($"❌ Error al generar tickets para transacción {transaction.Reference}: {ex.Message}");
-                            // No actualizamos el estado si falla la generación de tickets
                         }
                     }
-                    else if (status.StatusCode == 2 && transaction.Status != "Rejected") // RECHAZADO
+                    else if (status.StatusCode == 2 && transaction.Status != "Rejected")
                     {
                         _logger.LogWarning($"❌ Transacción RECHAZADA: {transaction.Reference}");
                         transaction.Status = "Rejected";
                         transaction.UpdatedAt = DateTime.UtcNow;
                     }
-                    else if (status.StatusCode == 4) // CANCELADO
+                    else if (status.StatusCode == 4)
                     {
                         _logger.LogInformation($"🚫 Transacción CANCELADA: {transaction.Reference}");
                         transaction.Status = "Cancelled";
                         transaction.UpdatedAt = DateTime.UtcNow;
                     }
-                    else if (status.StatusCode == 1) // PENDIENTE
-                    {
-                        // Mantener como pendiente
-                        _logger.LogDebug($"⏳ Transacción aún PENDIENTE: {transaction.Reference}");
-                    }
                 }
                 catch (Exception ex)
                 {
                     _logger.LogError($"❌ Error al verificar transacción {transaction.Reference}: {ex.Message}");
-                    // Continuar con la siguiente transacción
                 }
             }
 
-            // Guardar todos los cambios
             await _context.SaveChangesAsync();
             _logger.LogInformation($"✅ Verificación de transacciones completada");
         }
